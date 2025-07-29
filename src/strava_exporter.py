@@ -93,6 +93,11 @@ class StravaExporter:
     def _load_and_refresh_strava_token(self):
         """Loads Strava token from file and refreshes if expired."""
         try:
+            # Check if the file is empty to avoid JSONDecodeError
+            if os.path.getsize(self.strava_token_file) == 0:
+                logger.error(f"Token file {self.strava_token_file} is empty. Please ensure the STRAVA_TOKEN_JSON secret is set correctly in your repository.")
+                raise FileNotFoundError
+
             with open(self.strava_token_file, 'r') as f:
                 token_data = json.load(f)
         except FileNotFoundError:
