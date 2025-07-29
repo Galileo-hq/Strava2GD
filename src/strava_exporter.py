@@ -45,6 +45,10 @@ class StravaExporter:
         self.google_token_file = BASE_DIR / 'config' / 'token.json'
         self.google_creds_file = BASE_DIR / 'config' / 'credentials.json'
         self.json_export_file = BASE_DIR / 'data' / 'strava_export.json'
+
+        # Ensure the data directory exists
+        self.json_export_file.parent.mkdir(parents=True, exist_ok=True)
+
         self.setup_credentials()
 
     def _load_config(self, config_path: str) -> Dict:
