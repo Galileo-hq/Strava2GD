@@ -291,8 +291,17 @@ class StravaExporter:
             # Determine the last fetch date
             last_fetch_date = None
             if existing_data and 'workouts' in existing_data and existing_data['workouts']:
-                last_fetch_date = max(datetime.fromisoformat(w['start_date_local']) for w in existing_data['workouts'])
-                logger.info(f"Last fetched activity date: {last_fetch_date}")
+                valid_dates = []
+                for w in existing_data['workouts']:
+                    date_str = w.get('start_date_local') or w.get('start_date')
+                    if date_str:
+                        valid_dates.append(datetime.fromisoformat(date_str))
+                
+                if valid_dates:
+                    last_fetch_date = max(valid_dates)
+                    logger.info(f"Last fetched activity date: {last_fetch_date}")
+                else:
+                    last_fetch_date = None
             else:
                 # If no existing data, fetch all activities for the specified period
                 last_fetch_date = datetime.now() - timedelta(days=days_back)
@@ -328,7 +337,7 @@ class StravaExporter:
                 original_count = len(final_data['workouts'])
                 final_data['workouts'] = [
                     w for w in final_data['workouts'] 
-                    if datetime.fromisoformat(w['start_date_local']) >= cutoff_date
+                    if datetime.fromisoformat(w.get('start_date_local') or w.get('start_date')) >= cutoff_date
                 ]
                 pruned_count = original_count - len(final_data['workouts'])
                 if pruned_count > 0:
