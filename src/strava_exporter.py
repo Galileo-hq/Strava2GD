@@ -1,5 +1,6 @@
 import os
 import json
+import io
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from stravalib.client import Client
@@ -8,7 +9,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 import pandas as pd
 import logging
 from typing import List, Optional, Dict
@@ -119,11 +120,33 @@ class StravaExporter:
 
         self.strava_client.access_token = token_data['access_token']
 
-    def get_strava_activities(self, days_back: int = 90):
-        """Fetch activities from Strava for the last X days"""
-        after_date = datetime.now() - timedelta(days=days_back)
-        activities = self.strava_client.get_activities(after=after_date)
-        return list(activities)
+    def get_strava_activities_since(self, since_date: datetime) -> List[Dict]:
+        """Fetch activities from Strava since a given date in weekly batches."""
+        all_activities = []
+        start_date = since_date
+        end_date = datetime.now()
+
+        current_start = start_date
+        while current_start < end_date:
+            current_end = min(current_start + timedelta(days=7), end_date)
+            logger.info(f"Fetching activities from {current_start.date()} to {current_end.date()}")
+            
+            try:
+                activities_iterator = self.strava_client.get_activities(
+                    after=current_start,
+                    before=current_end
+                )
+                activities_in_batch = list(activities_iterator)
+                if activities_in_batch:
+                    all_activities.extend(activities_in_batch)
+                logger.info(f"Found {len(activities_in_batch)} activities in this batch.")
+
+            except Exception as e:
+                logger.error(f"Error fetching batch from {current_start.date()} to {current_end.date()}: {e}")
+            
+            current_start += timedelta(days=7)
+
+        return all_activities
 
     def format_data_for_json(self, activities):
         """Formats activity and split data into the V2 nested JSON structure."""
@@ -182,6 +205,31 @@ class StravaExporter:
             'workouts': workouts_list
         }
 
+    def download_from_google_drive(self, remote_filename, local_filepath):
+        """Downloads a file from Google Drive if it exists."""
+        try:
+            query = f"name='{remote_filename}' and trashed=false"
+            response = self.google_drive_service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+            files = response.get('files', [])
+
+            if files:
+                file_id = files[0].get('id')
+                request = self.google_drive_service.files().get_media(fileId=file_id)
+                fh = io.FileIO(local_filepath, 'wb')
+                downloader = MediaIoBaseDownload(fh, request)
+                done = False
+                while not done:
+                    status, done = downloader.next_chunk()
+                    logger.info(f"Download {int(status.progress() * 100)}%.")
+                logger.info(f"Successfully downloaded '{remote_filename}' from Google Drive.")
+                return True
+            else:
+                logger.info(f"'{remote_filename}' not found in Google Drive. A new file will be created.")
+                return False
+        except HttpError as e:
+            logger.error(f"An error occurred while downloading from Google Drive: {e}")
+            return False
+
     def upload_to_google_drive(self, local_filepath, remote_filename):
         """Uploads a file to Google Drive, updating it if it exists."""
         try:
@@ -221,37 +269,79 @@ class StravaExporter:
             return False
 
     def run_export(self, days_back: Optional[int] = 90):
-        """
-        Export Strava activities to a JSON file and uploads it to Google Drive.
-        
-        Args:
-            days_back: Number of days to look back for activities
-        """
+        """Main function to run the export process with incremental updates."""
         try:
-            # Use config values if not provided
             if days_back is None:
                 days_back = self.config.get('days_back', 90)
 
-            logger.info(f"Fetching activities from the last {days_back} days...")
-            activities = self.get_strava_activities(days_back)
-            
-            if not activities:
-                logger.warning("No activities found.")
-                return
+            # Download existing data from Google Drive
+            existing_data = None
+            if self.download_from_google_drive('strava_export.json', self.json_export_file):
+                with open(self.json_export_file, 'r') as f:
+                    try:
+                        existing_data = json.load(f)
+                    except json.JSONDecodeError:
+                        logger.warning("Could not decode existing JSON file. Starting fresh.")
+                        existing_data = None
 
-            logger.info(f"Found {len(activities)} activities")
+            # Determine the last fetch date
+            last_fetch_date = None
+            if existing_data and 'workouts' in existing_data and existing_data['workouts']:
+                last_fetch_date = max(datetime.fromisoformat(w['start_date_local']) for w in existing_data['workouts'])
+                logger.info(f"Last fetched activity date: {last_fetch_date}")
+            else:
+                # If no existing data, fetch all activities for the specified period
+                last_fetch_date = datetime.now() - timedelta(days=days_back)
+                logger.info(f"No existing data found. Fetching activities since {last_fetch_date.date()}")
 
-            # Create and write JSON output
-            logger.info("Formatting data for JSON output...")
-            json_data = self.format_data_for_json(activities)
-            if self.write_to_json(json_data, self.json_export_file):
-                # Upload JSON to Google Drive
-                logger.info("Uploading JSON export to Google Drive...")
-                upload_success = self.upload_to_google_drive(self.json_export_file, 'strava_export.json')
-                if upload_success:
-                    logger.info("JSON export uploaded to Google Drive successfully.")
+            # Fetch new activities since the last fetch date
+            logger.info(f"Fetching new activities since {last_fetch_date.date()}...")
+            new_activities = self.get_strava_activities_since(last_fetch_date)
+
+            if not new_activities:
+                logger.info("No new activities found.")
+            else:
+                logger.info(f"Found {len(new_activities)} new activities.")
+
+            # Merge new activities with existing data
+            if existing_data and 'workouts' in existing_data:
+                # Create a set of existing IDs for quick lookup
+                existing_ids = {w['id'] for w in existing_data['workouts']}
+                # Format and add only new activities
+                formatted_new = self.format_data_for_json(new_activities)['workouts']
+                for workout in formatted_new:
+                    if workout['id'] not in existing_ids:
+                        existing_data['workouts'].append(workout)
+                # Sort workouts by date
+                existing_data['workouts'].sort(key=lambda w: w['start_date_local'], reverse=True)
+                final_data = existing_data
+            else:
+                final_data = self.format_data_for_json(new_activities)
+
+            # Prune workouts older than the threshold
+            cutoff_date = datetime.now() - timedelta(days=days_back)
+            if 'workouts' in final_data:
+                original_count = len(final_data['workouts'])
+                final_data['workouts'] = [
+                    w for w in final_data['workouts'] 
+                    if datetime.fromisoformat(w['start_date_local']) >= cutoff_date
+                ]
+                pruned_count = original_count - len(final_data['workouts'])
+                if pruned_count > 0:
+                    logger.info(f"Pruned {pruned_count} workouts older than {days_back} days.")
+
+            # Update metadata and write to file
+            final_data['metadata'] = {
+                'schema_version': '2.0',
+                'exported_at': datetime.now().isoformat()
+            }
+
+            if self.write_to_json(final_data, self.json_export_file):
+                logger.info("Uploading updated JSON export to Google Drive...")
+                if self.upload_to_google_drive(self.json_export_file, 'strava_export.json'):
+                    logger.info("JSON export uploaded successfully.")
                 else:
-                    logger.error("Failed to upload JSON export to Google Drive.")
+                    logger.error("Failed to upload JSON export.")
 
         except Exception as e:
             logger.error(f"Error during export: {str(e)}", exc_info=True)
