@@ -1,7 +1,7 @@
 import os
 import json
 import io
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from stravalib.client import Client
 from google.oauth2.credentials import Credentials
@@ -128,7 +128,7 @@ class StravaExporter:
         """Fetch activities from Strava since a given date in weekly batches."""
         all_activities = []
         start_date = since_date
-        end_date = datetime.now()
+        end_date = datetime.now(timezone.utc)
 
         current_start = start_date
         while current_start < end_date:
@@ -304,7 +304,7 @@ class StravaExporter:
                     last_fetch_date = None
             else:
                 # If no existing data, fetch all activities for the specified period
-                last_fetch_date = datetime.now() - timedelta(days=days_back)
+                last_fetch_date = datetime.now(timezone.utc) - timedelta(days=days_back)
                 logger.info(f"No existing data found. Fetching activities since {last_fetch_date.date()}")
 
             # Fetch new activities since the last fetch date
