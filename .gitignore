@@ -1,0 +1,15 @@
+# Environment variables
+.env
+
+# Configuration files containing secrets
+/config/
+
+# Python virtual environment and cache
+/venv/
+data/
+__pycache__/
+*.pyc
+
+# IDE / Editor specific
+.vscode/
+.idea/
