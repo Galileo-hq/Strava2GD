@@ -326,7 +326,7 @@ class StravaExporter:
                     if workout['id'] not in existing_ids:
                         existing_data['workouts'].append(workout)
                 # Sort workouts by date
-                existing_data['workouts'].sort(key=lambda w: w['start_date_local'], reverse=True)
+                existing_data['workouts'].sort(key=lambda w: (w.get('start_date_local') or w.get('start_date')), reverse=True)
                 final_data = existing_data
             else:
                 final_data = self.format_data_for_json(new_activities)
