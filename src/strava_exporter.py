@@ -332,7 +332,7 @@ class StravaExporter:
                 final_data = self.format_data_for_json(new_activities)
 
             # Prune workouts older than the threshold
-            cutoff_date = datetime.now() - timedelta(days=days_back)
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_back)
             if 'workouts' in final_data:
                 original_count = len(final_data['workouts'])
                 final_data['workouts'] = [
