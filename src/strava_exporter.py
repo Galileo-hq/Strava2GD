@@ -77,21 +77,16 @@ class StravaExporter:
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
+                try:
+                    creds.refresh(Request())
+                except Exception as e:
+                    logger.error(f"Google token has expired or been revoked: {e}")
+                    logger.error("Please re-authenticate by running 'python3 src/authenticate_google.py' locally and updating the GOOGLE_TOKEN_JSON secret.")
+                    raise
             else:
-                flow = InstalledAppFlow.from_client_secrets_file(self.google_creds_file, SCOPES)
-                creds = flow.run_console()
-
-            with open(self.google_token_file, 'w') as token:
-                creds_data = {
-                    'token': creds.token,
-                    'refresh_token': creds.refresh_token,
-                    'token_uri': creds.token_uri,
-                    'client_id': creds.client_id,
-                    'client_secret': creds.client_secret,
-                    'scopes': creds.scopes
-                }
-                token.write(json.dumps(creds_data, indent=4))
+                logger.error("Google credentials are not valid and cannot be refreshed.")
+                logger.error("Please run 'python3 src/authenticate_google.py' locally to generate a new token.json and update the GOOGLE_TOKEN_JSON secret.")
+                raise Exception("Invalid Google credentials")
 
         self.google_drive_service = build('drive', 'v3', credentials=creds)
 
