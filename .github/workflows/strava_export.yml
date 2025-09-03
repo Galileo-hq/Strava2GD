@@ -25,6 +25,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Create config directory
         run: mkdir -p config
 
@@ -38,7 +41,8 @@ jobs:
         run: |
           set +x
           echo "$GOOGLE_CREDENTIALS_JSON" > config/credentials.json
-          echo "$GOOGLE_TOKEN_JSON" > config/token.json
+          # Merge client_id and client_secret from credentials.json into token.json
+          jq -s '.[0] * .[1].installed' config/token.json config/credentials.json > config/temp_token.json && mv config/temp_token.json config/token.json
           echo "$STRAVA_TOKEN_JSON" > config/strava_token.json
           echo "STRAVA_CLIENT_ID=$STRAVA_CLIENT_ID" > .env
           echo "STRAVA_CLIENT_SECRET=$STRAVA_CLIENT_SECRET" >> .env
