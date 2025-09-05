@@ -3,7 +3,9 @@ import json
 import io
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
+import time
 from stravalib.client import Client
+from stravalib.exc import Fault
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -117,17 +119,37 @@ class StravaExporter:
             raise
 
         if datetime.now().timestamp() > token_data['expires_at']:
-            logger.info("Strava token expired, refreshing...")
+            logger.info("Strava token expired, attempting to refresh...")
             client = Client()
-            new_token = client.refresh_access_token(
-                client_id=os.getenv('STRAVA_CLIENT_ID'),
-                client_secret=os.getenv('STRAVA_CLIENT_SECRET'),
-                refresh_token=token_data['refresh_token']
-            )
-            with open(self.strava_token_file, 'w') as f:
-                json.dump(new_token, f, indent=2)
-            token_data = new_token
-            logger.info("Strava token refreshed and saved.")
+            refreshed = False
+            max_retries = 3
+            retry_delay = 10  # seconds
+
+            for attempt in range(max_retries):
+                try:
+                    new_token = client.refresh_access_token(
+                        client_id=os.getenv('STRAVA_CLIENT_ID'),
+                        client_secret=os.getenv('STRAVA_CLIENT_SECRET'),
+                        refresh_token=token_data['refresh_token']
+                    )
+                    with open(self.strava_token_file, 'w') as f:
+                        json.dump(new_token, f, indent=2)
+                    token_data = new_token
+                    logger.info("Strava token refreshed and saved successfully.")
+                    refreshed = True
+                    break  # Exit loop on success
+                except Fault as e:
+                    logger.warning(f"Attempt {attempt + 1}/{max_retries} failed to refresh Strava token: {e}")
+                    if attempt < max_retries - 1:
+                        logger.info(f"Retrying in {retry_delay} seconds...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                    else:
+                        logger.error("All attempts to refresh Strava token failed.")
+                        raise  # Re-raise the last exception
+
+            if not refreshed:
+                raise Exception("Could not refresh Strava token after multiple attempts.")
 
         self.strava_client.access_token = token_data['access_token']
 
