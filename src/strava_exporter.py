@@ -74,33 +74,41 @@ class StravaExporter:
         SCOPES = ['https://www.googleapis.com/auth/drive.file']
         creds = None
 
-        if os.path.exists(self.google_token_file):
+        google_token_json = os.getenv('GOOGLE_TOKEN_JSON')
+        if google_token_json:
+            logger.info("Loading Google credentials from GOOGLE_TOKEN_JSON environment variable.")
+            try:
+                creds_info = json.loads(google_token_json)
+                creds = Credentials.from_authorized_user_info(creds_info, SCOPES)
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.error(f"Failed to load Google credentials from environment variable: {e}")
+                creds = None
+        elif os.path.exists(self.google_token_file):
+            logger.info(f"Loading Google credentials from {self.google_token_file}.")
             try:
                 creds = Credentials.from_authorized_user_file(self.google_token_file, SCOPES)
             except ValueError as e:
-                logger.warning(f"Could not load token file: {e}. Will attempt to re-authenticate if possible.")
+                logger.warning(f"Could not load token file: {e}. A new token may be required.")
                 creds = None
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
+                logger.info("Google token has expired, attempting to refresh...")
                 try:
                     creds.refresh(Request())
+                    # If running in a CI environment, the refreshed token is not saved back to the secret.
+                    # The user must manually update the secret after a successful local refresh.
+                    logger.info("Google token refreshed successfully for this session.")
                 except Exception as e:
                     logger.error(f"Google token has expired or been revoked: {e}")
-                    logger.error("Please re-authenticate by running 'python3 src/authenticate_google.py' locally and updating the GOOGLE_TOKEN_JSON secret.")
-                    creds = None # Force re-authentication
-
-            if not creds: # Re-authenticate
-                if os.path.exists(self.google_creds_file):
-                    flow = InstalledAppFlow.from_client_secrets_file(self.google_creds_file, SCOPES)
-                    # This part will require user interaction if run locally
-                    # In a CI/CD environment, this will fail if token.json is not pre-populated and valid
-                    logger.error("Google credentials are not valid and need interactive authentication.")
-                    logger.error("Please run 'python3 src/authenticate_google.py' locally to generate a new token.json and update the GOOGLE_TOKEN_JSON secret.")
-                    raise Exception("Invalid or missing Google credentials, requires interactive login.")
-                else:
-                    logger.error(f"Google credentials file not found at {self.google_creds_file}")
-                    raise FileNotFoundError(f"Google credentials file not found at {self.google_creds_file}")
+                    logger.error("This usually means the refresh token is invalid. Please re-authenticate locally.")
+                    creds = None  # Invalidate credentials
+            
+            if not creds:
+                logger.error("Google credentials are not valid and interactive authentication is required.")
+                logger.error("Please run 'python3 src/authenticate_google.py' locally to generate a new 'token.json'.")
+                logger.error("Then, update the GOOGLE_TOKEN_JSON secret in your GitHub repository with the content of the new file.")
+                raise Exception("Invalid or missing Google credentials, requires interactive login.")
 
         self.google_drive_service = build('drive', 'v3', credentials=creds)
 

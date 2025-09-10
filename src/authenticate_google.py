@@ -18,35 +18,39 @@ def authenticate():
     """Runs the Google authentication flow and saves the token."""
     creds = None
 
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first
-    # time.
+    # The file token.json stores the user's access and refresh tokens.
+    # It's created automatically when the authorization flow completes for the first time.
     if os.path.exists(GOOGLE_TOKEN_FILE):
-        # Delete the old token file to force re-authentication
-        print(f"Found existing token file at {GOOGLE_TOKEN_FILE}. Deleting it to force re-authentication.")
-        os.remove(GOOGLE_TOKEN_FILE)
+        try:
+            creds = Credentials.from_authorized_user_file(GOOGLE_TOKEN_FILE, SCOPES)
+        except Exception as e:
+            print(f"Error loading token file: {e}. A new token will be generated.")
+            creds = None
 
     # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
+            print("Token has expired, attempting to refresh...")
             try:
                 creds.refresh(Request())
+                print("Token refreshed successfully.")
             except Exception as e:
                 print(f"Could not refresh token: {e}")
-                print("Proceeding to re-authenticate.")
-                creds = None # Force re-authentication
-
+                print("Proceeding to re-authenticate to get a new refresh token.")
+                creds = None  # Force re-authentication
+        
         if not creds:
+            print("A new authentication is required.")
             if not os.path.exists(GOOGLE_CREDS_FILE):
                 print(f"Error: Google credentials file not found at {GOOGLE_CREDS_FILE}")
-                print("Please make sure you have your 'credentials.json' from Google Cloud Console in the 'config' directory.")
+                print("Please make sure you have your 'credentials.json' from the Google Cloud Console in the 'config' directory.")
                 return
 
             flow = InstalledAppFlow.from_client_secrets_file(GOOGLE_CREDS_FILE, SCOPES)
             creds = flow.run_local_server(port=0)
 
         # Save the credentials for the next run
-        with open(GOOGLE_TOKEN_FILE, 'w') as token:
+        with open(GOOGLE_TOKEN_FILE, 'w') as token_file:
             creds_data = {
                 'token': creds.token,
                 'refresh_token': creds.refresh_token,
@@ -55,10 +59,14 @@ def authenticate():
                 'client_secret': creds.client_secret,
                 'scopes': creds.scopes
             }
-            token.write(json.dumps(creds_data, indent=4))
+            token_file.write(json.dumps(creds_data, indent=4))
         
         print(f"\nAuthentication successful. Token saved to {GOOGLE_TOKEN_FILE}")
-        print("\nPlease update your GitHub repository's `GOOGLE_TOKEN_JSON` secret with the content of this file.")
+        print("\n--- ACTION REQUIRED ---")
+        print("Copy the entire content of the file 'config/token.json' and paste it into your GitHub repository's `GOOGLE_TOKEN_JSON` secret.")
+        print("This is a critical step for the GitHub Actions workflow to succeed.")
+    else:
+        print("Google token is still valid. No action needed.")
 
 if __name__ == '__main__':
     # Ensure the config directory exists
