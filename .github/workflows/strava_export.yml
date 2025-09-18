@@ -38,10 +38,11 @@ jobs:
         run: |
           set +x
           echo "$GOOGLE_CREDENTIALS_JSON" > config/credentials.json
-          echo "$GOOGLE_TOKEN_JSON" > config/token.json
           echo "$STRAVA_TOKEN_JSON" > config/strava_token.json
           echo "STRAVA_CLIENT_ID=$STRAVA_CLIENT_ID" > .env
           echo "STRAVA_CLIENT_SECRET=$STRAVA_CLIENT_SECRET" >> .env
 
       - name: Run Strava Exporter
+        env:
+          GOOGLE_TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_JSON }}
         run: python src/strava_exporter.py

@@ -36,7 +36,12 @@ def authenticate():
                 print("Token refreshed successfully.")
             except Exception as e:
                 print(f"Could not refresh token: {e}")
-                print("Proceeding to re-authenticate to get a new refresh token.")
+                # If the refresh token is invalid, delete the token file to force re-authentication.
+                if 'invalid_grant' in str(e):
+                    print("Refresh token is invalid. Deleting old token file and forcing re-authentication.")
+                    os.remove(GOOGLE_TOKEN_FILE)
+                else:
+                    print("Proceeding to re-authenticate to get a new refresh token.")
                 creds = None  # Force re-authentication
         
         if not creds:
